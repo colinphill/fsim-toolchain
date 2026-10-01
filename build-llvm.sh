@@ -64,6 +64,9 @@ while [ $# -gt 0 ]; do
     --with-python)
         WITH_PYTHON=1
         ;;
+    --with-llvm-dev=*)
+        LLVM_DEV="${1#*=}"
+        ;;
     --disable-lldb)
         unset LLDB
         ;;
@@ -108,13 +111,17 @@ done
 BUILDDIR="$BUILDDIR$ASSERTSSUFFIX"
 if [ -z "$CHECKOUT_ONLY" ]; then
     if [ -z "$PREFIX" ]; then
-        echo $0 [--enable-asserts] [--with-clang] [--use-linker=linker] [--thinlto] [--lto] [--instrumented[=type]] [--pgo[=profile]] [--disable-dylib] [--full-llvm] [--with-python] [--disable-lldb] [--disable-clang-tools-extra] [--host=triple] [--no-llvm-tool-reuse] [--macos-native-tools] dest
+        echo $0 [--enable-asserts] [--with-clang] [--use-linker=linker] [--thinlto] [--lto] [--instrumented[=type]] [--pgo[=profile]] [--disable-dylib] [--full-llvm] [--with-python] [--with-llvm-dev=dir] [--disable-lldb] [--disable-clang-tools-extra] [--host=triple] [--no-llvm-tool-reuse] [--macos-native-tools] dest
         exit 1
     fi
 
     if [ "$INSTRUMENTED" = "OFF" ]; then
         mkdir -p "$PREFIX"
         PREFIX="$(cd "$PREFIX" && pwd)"
+    fi
+    if [ -n "$LLVM_DEV" ]; then
+        mkdir -p "$LLVM_DEV"
+        LLVM_DEV="$(cd "$LLVM_DEV" && pwd)"
     fi
 fi
 
@@ -360,6 +367,14 @@ TOOLCHAIN_ONLY=ON
 if [ -n "$FULL_LLVM" ]; then
     TOOLCHAIN_ONLY=OFF
 fi
+if [ -n "$LLVM_DEV" ]; then
+    # fsim: the LLVM development package comes from this same build, so
+    # consumers compile against exactly the libLLVM the toolchain ships.
+    # Its install rules exist only without LLVM_INSTALL_TOOLCHAIN_ONLY; the
+    # distribution limits the exported CMake targets to the shared library.
+    TOOLCHAIN_ONLY=OFF
+    CMAKEFLAGS="$CMAKEFLAGS -DLLVM_DISTRIBUTION_COMPONENTS=LLVM;llvm-headers;cmake-exports"
+fi
 
 cd llvm-project/llvm
 
@@ -400,7 +415,8 @@ cmake \
     -DLLVM_ENABLE_ASSERTIONS=$ASSERTS \
     -DLLVM_ENABLE_PROJECTS="$PROJECTS" \
     -DLLVM_ENABLE_BINDINGS=OFF \
-    -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86;NVPTX" \
+    -DLLVM_TARGETS_TO_BUILD="X86" \
+    -DLLVM_ENABLE_RTTI=ON \
     -DLLVM_INSTALL_TOOLCHAIN_ONLY=$TOOLCHAIN_ONLY \
     -DLLVM_LINK_LLVM_DYLIB=$LINK_DYLIB \
     -DLLVM_TOOLCHAIN_TOOLS="llvm-ar;llvm-ranlib;llvm-objdump;llvm-rc;llvm-cvtres;llvm-nm;llvm-strings;llvm-readobj;llvm-dlltool;llvm-pdbutil;llvm-objcopy;llvm-strip;llvm-cov;llvm-profdata;llvm-addr2line;llvm-symbolizer;llvm-windres;llvm-ml;llvm-readelf;llvm-size;llvm-cxxfilt;llvm-lib" \
@@ -420,4 +436,14 @@ else
     cmake --install . --strip
 
     cp ../LICENSE.TXT $PREFIX
+
+    if [ -n "$LLVM_DEV" ]; then
+        for component in llvm-headers cmake-exports LLVM; do
+            cmake --install . --strip --prefix "$LLVM_DEV" --component $component
+        done
+        # The shared library itself ships in the toolchain; the development
+        # package overlays it with headers, the import library and CMake files.
+        rm -rf "$LLVM_DEV/bin"
+        cp ../LICENSE.TXT "$LLVM_DEV"
+    fi
 fi

@@ -1,0 +1,137 @@
+name: fsim toolchain
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'fsim-*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      NAME: ${{steps.meta.outputs.NAME}}
+      SOURCE_DATE_EPOCH: ${{steps.meta.outputs.SOURCE_DATE_EPOCH}}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select archive name
+        id: meta
+        run: |
+          if [ "${{github.ref_type}}" = tag ]; then
+              VERSION="${{github.ref_name}}"
+              VERSION="${VERSION#fsim-}"
+          else
+              VERSION="dev-$(git rev-parse --short=12 HEAD)"
+          fi
+          echo NAME=fsim-toolchain-$VERSION-ucrt-x86_64 >> $GITHUB_OUTPUT
+          echo SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) >> $GITHUB_OUTPUT
+          cat $GITHUB_OUTPUT
+
+  # A Linux-hosted compiler targeting x86_64-w64-mingw32; it builds the
+  # target runtimes and later cross-compiles the Windows-hosted tools.
+  stage1:
+    needs: [prepare]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build
+        env:
+          SOURCE_DATE_EPOCH: ${{needs.prepare.outputs.SOURCE_DATE_EPOCH}}
+        run: |
+          fsim/build.sh stage1 $(pwd)/install/stage1
+          TOOLCHAIN_ARCHS=x86_64 ./run-tests.sh $(pwd)/install/stage1
+          tar -Jcf stage1.tar.xz -C install --format=ustar --numeric-owner \
+              --owner=0 --group=0 --sort=name stage1
+      - uses: actions/upload-artifact@v6
+        with:
+          name: stage1
+          path: stage1.tar.xz
+          retention-days: 7
+
+  profile:
+    needs: [stage1]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage1
+      - name: Build profile
+        run: |
+          tar -Jxf stage1.tar.xz
+          fsim/build.sh profile $(pwd)/stage1
+      - uses: actions/upload-artifact@v6
+        with:
+          name: profile
+          path: profile.profdata
+          retention-days: 7
+
+  windows:
+    needs: [prepare, stage1, profile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage1
+      - uses: actions/download-artifact@v8
+        with:
+          name: profile
+      - name: Build
+        env:
+          SOURCE_DATE_EPOCH: ${{needs.prepare.outputs.SOURCE_DATE_EPOCH}}
+        run: |
+          sudo apt-get update && sudo apt-get install libltdl-dev autoconf-archive zip
+          tar -Jxf stage1.tar.xz
+          sudo mv stage1 /opt/stage1
+          fsim/build.sh windows /opt/stage1 $(pwd)/install/toolchain \
+              $(pwd)/install/llvm-dev --pgo
+          fsim/package.sh install/toolchain install/llvm-dev dist \
+              ${{needs.prepare.outputs.NAME}}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist
+          path: dist/*
+          retention-days: 14
+
+  test:
+    needs: [prepare, windows]
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Test the toolchain and LLVM overlay
+        run: |
+          & ./fsim/test-windows.ps1 -Dist dist -Name "${{needs.prepare.outputs.NAME}}"
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [prepare, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{github.token}}
+        run: |
+          gh release create "${{github.ref_name}}" dist/* \
+              --repo "${{github.repository}}" \
+              --title "${{needs.prepare.outputs.NAME}}" \
+              --notes "Built from ${{github.sha}}. Verify with ${{needs.prepare.outputs.NAME}}.sha256."

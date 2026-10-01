@@ -1,0 +1,3 @@
+# The build scripts run under Linux shells, including from Windows
+# checkouts through WSL or MSYS2, so they must keep LF line endings.
+* text=auto eol=lf

@@ -51,6 +51,9 @@ cp $SRC/$CROSS_ARCH-w64-mingw32/bin/*.dll $DEST/bin
 # copy the individual include subdirectories that are missing.
 rm -rf $DEST/lib/clang/$CLANG_VERSION
 cp -a $CLANG_RESOURCE_DIR $DEST/lib/clang/$CLANG_VERSION
+# fsim: the toolchain only targets Windows; drop the native Linux/macOS
+# runtimes the stage1 toolchain built for its own profiling.
+rm -rf $DEST/lib/clang/$CLANG_VERSION/lib/linux $DEST/lib/clang/$CLANG_VERSION/lib/darwin
 
 mkdir -p $DEST/include
 # Copy over headers and arch specific files, converting a unix style
