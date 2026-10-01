@@ -12,7 +12,15 @@ function Check([bool]$Condition, [string]$Message) {
 }
 
 function Run([string]$Program, [string[]]$Arguments) {
-  $output = & $Program @Arguments 2>&1 | Out-String
+  # Windows PowerShell turns redirected stderr into errors; judge native
+  # commands by their exit status alone.
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & $Program @Arguments 2>&1 | Out-String
+  } finally {
+    $ErrorActionPreference = $previous
+  }
   if ($LASTEXITCODE -ne 0) {
     throw "$Program $($Arguments -join ' ') failed ($LASTEXITCODE):`n$output"
   }
@@ -95,11 +103,14 @@ Set-Content -Path "$cmakeSource/main.cpp" -Encoding ascii -Value @'
 #include <llvm/Support/raw_ostream.h>
 int main() {
     llvm::LLVMContext context;
-    llvm::Value* value = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 7);
-    auto* constant = dynamic_cast<llvm::ConstantInt*>(value);
+    auto* constant = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 7);
+    // raw_ostream is polymorphic, so this cast needs libLLVM's RTTI.
+    llvm::raw_ostream* stream = &llvm::outs();
+    auto* file = dynamic_cast<llvm::raw_fd_ostream*>(stream);
     llvm::outs() << "llvm=" << LLVM_VERSION_STRING
-                 << " value=" << (constant ? constant->getZExtValue() : 0) << "\n";
-    return constant && constant->getZExtValue() == 7 ? 0 : 1;
+                 << " value=" << constant->getZExtValue()
+                 << " rtti=" << (file != nullptr) << "\n";
+    return constant->getZExtValue() == 7 && file != nullptr ? 0 : 1;
 }
 '@
 $cmakeBuild = Join-Path $work "llvm-consumer-build"
@@ -108,7 +119,7 @@ Run "cmake" @('-S', $cmakeSource, '-B', $cmakeBuild, '-G', 'Ninja',
   "-DLLVM_DIR=$root/lib/cmake/llvm") | Out-Null
 Run "cmake" @('--build', $cmakeBuild) | Out-Null
 $consumer = Run "$cmakeBuild/llvm_consumer.exe" @()
-Check ($consumer -match 'llvm=22\.1\.8 value=7') "LLVM consumer printed: $consumer"
+Check ($consumer -match 'llvm=22\.1\.8 value=7 rtti=1') "LLVM consumer printed: $consumer"
 
 # The redistributable is the build toolchain without GPL/LGPL build tools.
 $redist = Join-Path $work "redist"

@@ -12,8 +12,8 @@
 #
 #   fsim/package.sh TOOLCHAIN LLVM_DEV DIST NAME
 #
-# Entries are sorted and stamped with SOURCE_DATE_EPOCH (default: the commit
-# time) so repeated packaging of one build is byte-identical.
+# Entries are sorted and carry one fixed timestamp, so repeated packaging of
+# one build is byte-identical; FSIM-TOOLCHAIN.txt records the commit instead.
 
 set -e
 
@@ -34,7 +34,11 @@ LLVM_DEV="$(cd "$2" && pwd)"
 mkdir -p "$3"
 DIST="$(cd "$3" && pwd)"
 NAME="$4"
-: ${SOURCE_DATE_EPOCH:=$(git -C "$ROOT" log -1 --pretty=%ct)}
+# Zip timestamps have no time zone and extractors read them as local time.
+# A recent time such as the commit date would extract hours in the future
+# west of UTC, which makes CMake and Ninja regenerate endlessly, so every
+# entry gets 2000-01-01T00:00:00Z instead.
+ENTRY_TIME=946684800
 
 # Build tools under the GPL or LGPL stay out of the redistributable bundle.
 REDIST_EXCLUDES="
@@ -70,7 +74,7 @@ EOF
 make_zip() {
     stage="$1"
     zip_path="$2"
-    find "$stage" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+    find "$stage" -exec touch -h -d "@$ENTRY_TIME" {} +
     rm -f "$zip_path"
     (cd "$(dirname "$stage")" && find "$(basename "$stage")" -print \
         | LC_ALL=C sort | TZ=UTC zip -X -9 -q "$zip_path" -@)
