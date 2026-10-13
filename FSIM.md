@@ -13,7 +13,8 @@ version fsim requires).
 
 - Hosts and targets x86_64 Windows only (`TOOLCHAIN_ARCHS=x86_64`), with the
   UCRT. LLVM is built with only the X86 backend.
-- Contains clang, lld and LLDB (with `lldb-dap`), without clang-tools-extra
+- Contains clang, lld and LLDB (with `lldb-dap`, which fsim-gui uses for
+  native debugging; CI checks it is in every archive), without clang-tools-extra
   (clangd, clang-tidy), `lldb-mi`, or Python scripting for LLDB.
 - LLVM is built with RTTI, which fsim's JIT requires.
 - The same build also produces an LLVM development overlay (headers, CMake
@@ -29,8 +30,8 @@ to fsim lives under `fsim/` and in `.github/workflows/fsim.yml`.
 
 ## Outputs
 
-`fsim/package.sh` writes three archives with one top-level directory each,
-plus a SHA-256 list:
+`fsim/package.sh` writes three Windows archives with one top-level directory
+each, plus a SHA-256 list:
 
 | Archive | Contents | Used by |
 |---|---|---|
@@ -43,6 +44,15 @@ LGPL. What remains is under LLVM's Apache-2.0 WITH LLVM-exception
 license, the mingw-w64 runtime and header licenses (ZPL, public domain,
 MIT/BSD for winpthreads), and ISC for the llvm-mingw wrappers.
 
+`fsim/package-linux.sh` writes the Linux-hosted cross toolchain, which
+compiles for the same target with the same runtimes (CI checks that
+`libc++.dll` and `libunwind.dll` are byte-identical to the Windows-hosted
+toolchain's):
+
+| Archive | Contents | Used by |
+|---|---|---|
+| `NAME-linux-x86_64.tar.xz` | clang, lld and the x86_64-w64-mingw32 UCRT sysroot, running on x86_64 Linux (glibc of Ubuntu 22.04 or newer) | Cross-compiling fsim and plug-ins for Windows from Linux; extract `NAME-llvm-dev.zip` (and `NAME.zip` for `libLLVM-22.dll`) as the target root for the LLVM package |
+
 Each archive carries `FSIM-TOOLCHAIN.txt` (the overlay uses
 `share/fsim-toolchain/llvm-dev.txt`) naming the fork commit, the upstream
 tag, and the LLVM and mingw-w64 versions.
@@ -52,7 +62,9 @@ tag, and the LLVM and mingw-w64 versions.
 CI (`.github/workflows/fsim.yml`) follows upstream's release flow: a
 Linux-hosted stage1 compiler, a PGO profile, then the Windows-hosted
 toolchain cross-built with ThinLTO and PGO, tested on a Windows runner by
-`fsim/test-windows.ps1`. Pushing a tag `fsim-VERSION` publishes the
+`fsim/test-windows.ps1`, and the Linux-hosted toolchain rebuilt over stage1
+with ThinLTO and PGO, tested on a clean Linux runner by `fsim/test-linux.sh`
+(cross-compiling C++ and an LLVM overlay consumer, run under Wine). Pushing a tag `fsim-VERSION` publishes the
 archives as a GitHub release named `fsim-toolchain-VERSION-ucrt-x86_64`.
 
 A local build on Ubuntu 22.04 or later needs `build-essential cmake
@@ -62,6 +74,10 @@ ninja-build git curl zip unzip libltdl-dev autoconf-archive`:
 fsim/build.sh all /path/to/work          # add --pgo to match releases
 fsim/package.sh /path/to/work/toolchain /path/to/work/llvm-dev dist \
     fsim-toolchain-local-ucrt-x86_64
+fsim/package-linux.sh /path/to/work/linux dist \
+    fsim-toolchain-local-ucrt-x86_64-linux-x86_64
+fsim/test-linux.sh dist fsim-toolchain-local-ucrt-x86_64-linux-x86_64 \
+    fsim-toolchain-local-ucrt-x86_64      # needs cmake, ninja; Wine optional
 ```
 
 ## Updating

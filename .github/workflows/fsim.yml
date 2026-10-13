@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       NAME: ${{steps.meta.outputs.NAME}}
+      LINUX_NAME: ${{steps.meta.outputs.LINUX_NAME}}
       SOURCE_DATE_EPOCH: ${{steps.meta.outputs.SOURCE_DATE_EPOCH}}
     steps:
       - uses: actions/checkout@v6
@@ -30,6 +31,7 @@ jobs:
               VERSION="dev-$(git rev-parse --short=12 HEAD)"
           fi
           echo NAME=fsim-toolchain-$VERSION-ucrt-x86_64 >> $GITHUB_OUTPUT
+          echo LINUX_NAME=fsim-toolchain-$VERSION-ucrt-x86_64-linux-x86_64 >> $GITHUB_OUTPUT
           echo SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) >> $GITHUB_OUTPUT
           cat $GITHUB_OUTPUT
 
@@ -100,6 +102,55 @@ jobs:
           path: dist/*
           retention-days: 14
 
+  # The Linux-hosted cross toolchain: stage1's target runtimes with the LLVM
+  # tools rebuilt with ThinLTO and PGO, as upstream's Linux release. Built on
+  # Ubuntu 22.04 so the binaries run on that glibc and newer.
+  linux:
+    needs: [prepare, stage1, profile]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: stage1
+      - uses: actions/download-artifact@v8
+        with:
+          name: profile
+      - name: Build
+        env:
+          SOURCE_DATE_EPOCH: ${{needs.prepare.outputs.SOURCE_DATE_EPOCH}}
+        run: |
+          tar -Jxf stage1.tar.xz
+          sudo mv stage1 /opt/stage1
+          fsim/build.sh linux /opt/stage1 $(pwd)/install/linux --pgo
+          TOOLCHAIN_ARCHS=x86_64 ./run-tests.sh $(pwd)/install/linux
+          fsim/package-linux.sh install/linux linux-dist ${{needs.prepare.outputs.LINUX_NAME}}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: linux
+          path: linux-dist/*
+          retention-days: 14
+
+  # Cross-compile with the Linux toolchain on a clean runner, including the
+  # LLVM overlay fsim builds against, and run the results under Wine.
+  test-linux:
+    needs: [prepare, windows, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux
+          path: dist
+      - name: Test the cross toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends wine wine64 ninja-build
+          fsim/test-linux.sh dist ${{needs.prepare.outputs.LINUX_NAME}} ${{needs.prepare.outputs.NAME}}
+
   test:
     needs: [prepare, windows]
     runs-on: windows-2022
@@ -118,7 +169,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [prepare, test]
+    needs: [prepare, test, test-linux]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -126,6 +177,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: dist
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux
           path: dist
       - name: Publish release
         env:
