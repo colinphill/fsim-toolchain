@@ -28,7 +28,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 tar -C "$WORK" -Jxf "$DIST/$LINUX_NAME.tar.xz"
 unzip -q "$DIST/$WINDOWS_NAME.zip" -d "$WORK/windows"
-unzip -q "$DIST/$WINDOWS_NAME-llvm-dev.zip" -d "$WORK/windows"
+unzip -qo "$DIST/$WINDOWS_NAME-llvm-dev.zip" -d "$WORK/windows"
 ROOT="$WORK/$LINUX_NAME"
 WINDOWS="$WORK/windows/$WINDOWS_NAME"
 CXX="$ROOT/bin/x86_64-w64-mingw32-clang++"
@@ -139,6 +139,12 @@ set(CMAKE_SYSTEM_PROCESSOR x86_64)
 set(CMAKE_C_COMPILER "$ROOT/bin/x86_64-w64-mingw32-clang")
 set(CMAKE_CXX_COMPILER "$ROOT/bin/x86_64-w64-mingw32-clang++")
 set(CMAKE_RC_COMPILER "$ROOT/bin/x86_64-w64-mingw32-windres")
+# The Windows toolchain's include/ is both its MinGW sysroot and the LLVM
+# header root. Searching it after the cross sysroot makes CMake treat it as
+# implicit (as on Windows) and drop LLVM_INCLUDE_DIRS, which as -isystem would
+# shadow libc++'s C wrapper headers with MinGW's.
+set(CMAKE_C_FLAGS_INIT "-idirafter $WINDOWS/include")
+set(CMAKE_CXX_FLAGS_INIT "-idirafter $WINDOWS/include")
 set(CMAKE_FIND_ROOT_PATH "$ROOT/x86_64-w64-mingw32" "$WINDOWS")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

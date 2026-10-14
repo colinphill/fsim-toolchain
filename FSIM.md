@@ -53,6 +53,14 @@ toolchain's):
 |---|---|---|
 | `NAME-linux-x86_64.tar.xz` | clang, lld and the x86_64-w64-mingw32 UCRT sysroot, running on x86_64 Linux (glibc of Ubuntu 22.04 or newer) | Cross-compiling fsim and plug-ins for Windows from Linux; extract `NAME-llvm-dev.zip` (and `NAME.zip` for `libLLVM-22.dll`) as the target root for the LLVM package |
 
+The Windows-hosted root's `include/` is both its MinGW sysroot and the LLVM
+header directory. A CMake toolchain file for cross builds should list it in
+`CMAKE_FIND_ROOT_PATH` and pass `-idirafter WINDOWS_ROOT/include` in
+`CMAKE_C_FLAGS_INIT` and `CMAKE_CXX_FLAGS_INIT`. CMake then treats it as an
+implicit include directory, as it does on Windows, and drops
+`LLVM_INCLUDE_DIRS`; added with `-isystem`, those MinGW C headers would
+shadow libc++'s wrappers. `fsim/test-linux.sh` writes such a file.
+
 Each archive carries `FSIM-TOOLCHAIN.txt` (the overlay uses
 `share/fsim-toolchain/llvm-dev.txt`) naming the fork commit, the upstream
 tag, and the LLVM and mingw-w64 versions.
